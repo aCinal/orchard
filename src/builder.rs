@@ -352,6 +352,7 @@ pub struct SpendInfo {
     pub(crate) scope: Scope,
     pub(crate) note: Note,
     pub(crate) merkle_path: Option<MerklePath>,
+    pub(crate) alpha: Option<pallas::Scalar>,
 }
 
 impl SpendInfo {
@@ -359,12 +360,19 @@ impl SpendInfo {
     /// If you are not creating a custom builder, use [`Builder::add_spend`] instead.
     ///
     /// Creates a `SpendInfo` from note, full viewing key owning the note,
-    /// and merkle path witness of the note.
+    /// merkle path witness of the note, and optional spend randomizer `alpha`.
+    ///
+    /// If `alpha` is `None`, a fresh randomizer will be sampled at bundle-build time.
     ///
     /// Returns `None` if the `fvk` does not own the `note`.
     ///
     /// [`Builder::add_spend`]: Builder::add_spend
-    pub fn new(fvk: FullViewingKey, note: Note, merkle_path: MerklePath) -> Option<Self> {
+    pub fn new(
+        fvk: FullViewingKey,
+        note: Note,
+        merkle_path: MerklePath,
+        alpha: Option<pallas::Scalar>,
+    ) -> Option<Self> {
         let scope = fvk.scope_for_address(&note.recipient())?;
         Some(SpendInfo {
             dummy_sk: None,
@@ -372,6 +380,7 @@ impl SpendInfo {
             scope,
             note,
             merkle_path: Some(merkle_path),
+            alpha,
         })
     }
 
@@ -392,6 +401,7 @@ impl SpendInfo {
             scope,
             note,
             merkle_path: None,
+            alpha: None,
         })
     }
 
@@ -410,6 +420,7 @@ impl SpendInfo {
             scope: Scope::External,
             note,
             merkle_path,
+            alpha: None,
         }
     }
 
@@ -433,6 +444,8 @@ impl SpendInfo {
 
     /// Builds the spend half of an action.
     ///
+    /// Uses `self.alpha` as the spend randomizer if set, otherwise samples one from `rng`.
+    ///
     /// The returned values are chosen as in [Zcash Protocol Spec § 4.7.3: Sending Notes (Orchard)][orchardsend].
     ///
     /// [orchardsend]: https://zips.z.cash/protocol/nu5.pdf#orchardsend
@@ -445,11 +458,12 @@ impl SpendInfo {
         pallas::Scalar,
         redpallas::VerificationKey<SpendAuth>,
     ) {
+        let alpha = self
+            .alpha
+            .unwrap_or_else(|| pallas::Scalar::random(&mut rng));
         let nf_old = self.note.nullifier(&self.fvk);
         let ak: SpendValidatingKey = self.fvk.clone().into();
-        let alpha = pallas::Scalar::random(&mut rng);
         let rk = ak.randomize(&alpha);
-
         (nf_old, ak, alpha, rk)
     }
 
@@ -944,6 +958,9 @@ impl Builder {
     /// - `merkle_path` can be obtained using the [`incrementalmerkletree`] crate
     ///   instantiated with [`MerkleHashOrchard`].
     ///
+    /// The spend randomizer `alpha` is sampled at bundle-build time. Use
+    /// [`Builder::add_spend_with_alpha`] to supply a specific value.
+    ///
     /// Returns an error if the given Merkle path does not have the required anchor for
     /// the given note.
     ///
@@ -962,6 +979,20 @@ impl Builder {
         note: Note,
         merkle_path: MerklePath,
     ) -> Result<(), SpendError> {
+        self.add_spend_with_alpha(fvk, note, merkle_path, None)
+    }
+
+    /// Like [`Builder::add_spend`], but uses `alpha` as the spend randomizer.
+    ///
+    /// Pass `None` to defer sampling to bundle-build time (identical to [`Builder::add_spend`]),
+    /// or `Some(alpha)` to fix the randomizer to a specific value.
+    pub fn add_spend_with_alpha(
+        &mut self,
+        fvk: FullViewingKey,
+        note: Note,
+        merkle_path: MerklePath,
+        alpha: Option<pallas::Scalar>,
+    ) -> Result<(), SpendError> {
         let anchor = match &self.anchor {
             BuilderAnchor::Fixed(anchor) => anchor,
             BuilderAnchor::Deferred => return Err(SpendError::AnchorDeferred),
@@ -970,7 +1001,8 @@ impl Builder {
             return Err(SpendError::SpendsDisabled);
         }
 
-        let spend = SpendInfo::new(fvk, note, merkle_path).ok_or(SpendError::FvkMismatch)?;
+        let spend =
+            SpendInfo::new(fvk, note, merkle_path, alpha).ok_or(SpendError::FvkMismatch)?;
 
         // Consistency check: all anchors must be equal.
         if !spend.has_matching_anchor(anchor) {
@@ -1427,6 +1459,7 @@ fn build_bundle<B, R: RngCore>(
                 scope,
                 note,
                 merkle_path: Some(MerklePath::dummy(&mut rng)),
+                alpha: None,
             };
             pairs.push((None, Some(chg_idx), spend, output));
         }
@@ -1665,7 +1698,7 @@ pub struct SigningMetadata {
 }
 
 /// Marker for a partially-authorized bundle, in the process of being signed.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PartiallyAuthorized {
     binding_signature: redpallas::Signature<Binding>,
     sighash: [u8; 32],
@@ -1678,7 +1711,7 @@ impl InProgressSignatures for PartiallyAuthorized {
 /// A heisen[`Signature`] for a particular [`Action`].
 ///
 /// [`Signature`]: redpallas::Signature
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum MaybeSigned {
     /// The information needed to sign this [`Action`].
     SigningMetadata(SigningParts),

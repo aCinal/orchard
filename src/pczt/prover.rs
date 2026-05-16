@@ -96,8 +96,13 @@ impl super::Bundle {
                     .clone()
                     .ok_or(ProverError::MissingWitness)?;
 
-                let spend =
-                    SpendInfo::new(fvk, note, merkle_path).ok_or(ProverError::WrongFvkForNote)?;
+                let alpha = action
+                    .spend
+                    .alpha
+                    .ok_or(ProverError::MissingSpendAuthRandomizer)?;
+
+                let spend = SpendInfo::new(fvk, note, merkle_path, Some(alpha))
+                    .ok_or(ProverError::WrongFvkForNote)?;
 
                 let output_note = Note::from_parts(
                     action
@@ -112,10 +117,6 @@ impl super::Bundle {
                 .into_option()
                 .ok_or(ProverError::InvalidOutputNote)?;
 
-                let alpha = action
-                    .spend
-                    .alpha
-                    .ok_or(ProverError::MissingSpendAuthRandomizer)?;
                 let rcv = action
                     .rcv
                     .clone()
