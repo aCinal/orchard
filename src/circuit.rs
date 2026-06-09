@@ -6,12 +6,14 @@ use group::{Curve, GroupEncoding};
 use halo2_proofs::{
     circuit::{floor_planner, Layouter, Value},
     plonk::{
-        self, Advice, BatchVerifier, Column, Constraints, Expression, Instance as InstanceColumn,
+        self, Advice, Column, Constraints, Expression, Instance as InstanceColumn,
         Selector, SingleVerifier,
     },
     poly::Rotation,
     transcript::{Blake2bRead, Blake2bWrite},
 };
+#[cfg(feature = "batch")]
+use halo2_proofs::plonk::BatchVerifier;
 use pasta_curves::{arithmetic::CurveAffine, pallas, vesta};
 use rand::RngCore;
 
@@ -1376,6 +1378,7 @@ impl Proof {
     ///
     /// [`BatchValidator`]: crate::bundle::BatchValidator
     /// [`add_bundle`]: crate::bundle::BatchValidator::add_bundle
+    #[cfg(feature = "batch")]
     pub(crate) fn add_to_batch(
         &self,
         batch: &mut BatchVerifier<vesta::Affine>,
